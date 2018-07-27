@@ -40,6 +40,50 @@ DEFAULT_SUCATALOG = (
     '-mountainlion-lion-snowleopard-leopard.merged-1.sucatalog')
 
 
+def print_external_disks():
+    print "Attached USB drive:\n"
+    cmd = ['diskutil', 'list', 'external']
+    try:
+        output = subprocess.check_output(cmd)
+        print output
+    except subprocess.CalledProcessError, err:
+        print >> sys.stderr, err
+        exit(-1)
+
+def external_disks():
+    cmd = ['diskutil', 'list', '-plist', 'external']
+    try:
+        output = subprocess.check_output(cmd)
+        disks = plistlib.readPlistFromString(output)
+        disk_count = len(disks["WholeDisks"])
+        if disk_count == 0:
+            print "USB drive not detected."
+            exit(1)
+        elif disk_count > 1:
+            print "Please make sure there's only one USB drive attached then run this script again."
+            exit(1)
+        else:
+            return disks["WholeDisks"][0]
+    except subprocess.CalledProcessError, err:
+        print >> sys.stderr, err
+        exit(-1)
+
+def format_external_disk(target_disk, volume_name):
+    target_disk = '/dev/' + target_disk
+    confirm_erase = raw_input("WARNING: Formatting will erase all data on %s. Type \"YES\" to format this USB drive: " % target_disk)
+    cmd = ['diskutil', 'partitionDisk', target_disk, 'GPT', 'JHFS+', volume_name, '0b']
+    try:
+        if confirm_erase == "YES":
+            process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            for line in iter(process.stdout.readline, ''):
+                sys.stdout.write(line)
+        else:
+            print "A confirmation to proceed was not provided. The USB drive %s was not modified.\n" % target_disk
+            exit(1)
+    except subprocess.CalledProcessError, err:
+        print >> sys.stderr, err
+        exit(-1)
+
 def make_sparse_image(volume_name, output_path):
     '''Make a sparse disk image we can install a product to'''
     cmd = ['/usr/bin/hdiutil', 'create', '-size', '8g', '-fs', 'HFS+',
@@ -349,6 +393,11 @@ def main():
                         help='Ignore any previously cached files.')
     args = parser.parse_args()
 
+    target_vol_name = 'macos'
+    disk_id = external_disks()
+    print_external_disks()
+    format_external_disk(disk_id, target_vol_name)
+
     # download sucatalog and look for products that are for macOS installers
     catalog = download_and_parse_sucatalog(
         args.catalogurl, args.workdir, ignore_cache=args.ignore_cache)
@@ -386,17 +435,18 @@ def main():
         catalog, product_id, args.workdir, ignore_cache=args.ignore_cache)
 
     # generate a name for the sparseimage
-    volname = ('Install_macOS_%s-%s'
-               % (product_info[product_id]['version'],
-                  product_info[product_id]['BUILD']))
-    sparse_diskimage_path = os.path.join(args.workdir, volname + '.sparseimage')
-    if os.path.exists(sparse_diskimage_path):
-        os.unlink(sparse_diskimage_path)
+    # volname = ('Install_macOS_%s-%s'
+    #            % (product_info[product_id]['version'],
+    #               product_info[product_id]['BUILD']))
+    # sparse_diskimage_path = os.path.join(args.workdir, volname + '.sparseimage')
+    # if os.path.exists(sparse_diskimage_path):
+    #     os.unlink(sparse_diskimage_path)
 
     # make an empty sparseimage and mount it
-    print 'Making empty sparseimage...'
-    sparse_diskimage_path = make_sparse_image(volname, sparse_diskimage_path)
-    mountpoint = mountdmg(sparse_diskimage_path)
+    #print 'Making empty sparseimage...'
+    #sparse_diskimage_path = make_sparse_image(volname, sparse_diskimage_path)
+    #mountpoint = mountdmg(sparse_diskimage_path)
+    mountpoint = '/Volumes/' + target_vol_name
     if mountpoint:
         # install the product to the mounted sparseimage volume
         success = install_product(
@@ -406,26 +456,26 @@ def main():
             print >> sys.stderr, 'Product installation failed.'
             unmountdmg(mountpoint)
             exit(-1)
-        print 'Product downloaded and installed to %s' % sparse_diskimage_path
-        if not args.compress:
-            unmountdmg(mountpoint)
-        else:
-            # if --compress option given, create a r/o compressed diskimage
-            # containing the Install macOS app
-            compressed_diskimagepath = os.path.join(
-                args.workdir, volname + '.dmg')
-            if os.path.exists(compressed_diskimagepath):
-                os.unlink(compressed_diskimagepath)
-            applications_dir = os.path.join(mountpoint, 'Applications')
-            for item in os.listdir(applications_dir):
-                if item.endswith('.app'):
-                    app_path = os.path.join(applications_dir, item)
-                    make_compressed_dmg(app_path, compressed_diskimagepath)
-                    break
-            # unmount sparseimage
-            unmountdmg(mountpoint)
-            # delete sparseimage since we don't need it any longer
-            os.unlink(sparse_diskimage_path)
+        #print 'Product downloaded and installed to %s' % sparse_diskimage_path
+        # if not args.compress:
+        #     unmountdmg(mountpoint)
+        # else:
+        #     # if --compress option given, create a r/o compressed diskimage
+        #     # containing the Install macOS app
+        #     compressed_diskimagepath = os.path.join(
+        #         args.workdir, volname + '.dmg')
+        #     if os.path.exists(compressed_diskimagepath):
+        #         os.unlink(compressed_diskimagepath)
+        #     applications_dir = os.path.join(mountpoint, 'Applications')
+        #     for item in os.listdir(applications_dir):
+        #         if item.endswith('.app'):
+        #             app_path = os.path.join(applications_dir, item)
+        #             make_compressed_dmg(app_path, compressed_diskimagepath)
+        #             break
+        #     # unmount sparseimage
+        #     unmountdmg(mountpoint)
+        #     # delete sparseimage since we don't need it any longer
+        #     os.unlink(sparse_diskimage_path)
 
 
 if __name__ == '__main__':
